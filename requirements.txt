@@ -1,0 +1,3 @@
+# Only needed for Kalshi's read-only signed portfolio request.
+cryptography>=42,<47
+certifi>=2025.0.0

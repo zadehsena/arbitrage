@@ -1,0 +1,13 @@
+{
+  "fee_buffer_per_contract": 0.02,
+  "minimum_edge_per_contract": 0.02,
+  "matches": [
+    {
+      "label": "Human-reviewed identical contract",
+      "kalshi_ticker": "KXEXAMPLE-26-YES",
+      "polymarket_slug": "example-market",
+      "polymarket_yes_token_id": "replace-with-the-Yes-token-id",
+      "resolution_notes": "Both contracts must settle from the same source, at the same cutoff, with identical outcome definitions."
+    }
+  ]
+}
