@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cross-Venue Research</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#"><span class="brand-mark">⌁</span> Market<span>Arb</span></a>
+    <nav class="primary-nav" aria-label="Application">
+      <a class="active" href="#board"><i>⌂</i> Dashboard</a>
+    </nav>
+    <p class="section-label">SPORTS</p>
+    <nav class="sports-nav" aria-label="Sports">
+      <button class="tab" data-sport="baseball"><i>⚾</i> Baseball</button>
+      <button class="tab" data-sport="basketball"><i>🏀</i> Basketball</button>
+      <button class="tab active" data-sport="football"><i>🏈</i> Football</button>
+      <button class="tab" data-sport="hockey"><i>🏒</i> Hockey</button>
+      <button class="tab" data-sport="soccer"><i>⚽</i> Soccer</button>
+      <button class="tab" data-sport="tennis"><i>🎾</i> Tennis</button>
+    </nav>
+    <div class="live-card"><span class="pulse"></span>
+      <div><strong>Live markets</strong><small>Public feeds only</small><small id="sidebar-updated">Updating…</small>
+      </div><span class="bars">▁▃▆</span>
+    </div>
+  </aside>
+
+  <main class="app" id="board">
+    <header class="topbar">
+      <label class="search"><span>⌕</span><input id="search" type="search"
+          placeholder="Search teams, games, or markets…"></label>
+      <div class="topbar-right"><span class="live-status"><i class="pulse"></i> Live</span><span
+          id="clock"></span><button id="refresh" type="button">↻ Refresh</button></div>
+    </header>
+    <section class="content">
+      <div class="sport-header">
+        <div>
+          <h1 id="sport-title">Football <span>⌄</span></h1>
+        </div>
+        <div class="header-actions"><button class="control">▣ Today⌄</button><button class="control">≡ Filters</button>
+        </div>
+      </div>
+      <section id="meta" class="meta" aria-live="polite">Loading matched games…</section>
+      <section id="notice" class="notice">Prices must be verified against each venue’s live executable order book and
+        fees.</section>
+      <section id="table-wrap" class="table-wrap" aria-live="polite"></section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+
+</html>
