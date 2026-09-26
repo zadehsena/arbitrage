@@ -28,6 +28,31 @@ ACCOUNT_SUMMARY_TIMEOUT_SECONDS = 5
 SPORT_PAGE_SIZE = 25
 
 
+def _report_metadata_path(report_path: Path) -> Path:
+    """Return the small sidecar file containing a cached report's source totals."""
+    return report_path.with_name(f"{report_path.stem}_metadata.json")
+
+
+def _write_sport_report_cache(report_path: Path, records: list[dict],
+                              kalshi_count: int, polymarket_count: int) -> None:
+    """Cache report rows and the upstream event totals used to produce them."""
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(records, indent=2) + "\n")
+    _report_metadata_path(report_path).write_text(json.dumps({
+        "kalshi_events_compared": kalshi_count,
+        "polymarket_events_compared": polymarket_count,
+    }, indent=2) + "\n")
+
+
+def _cached_source_counts(report_path: Path) -> tuple[int | None, int | None]:
+    """Read upstream event totals without treating matched rows as source rows."""
+    try:
+        metadata = json.loads(_report_metadata_path(report_path).read_text())
+        return metadata.get("kalshi_events_compared"), metadata.get("polymarket_events_compared")
+    except (OSError, json.JSONDecodeError):
+        return None, None
+
+
 def _requested_leagues(query: str) -> tuple[str, ...] | None:
     """Read a comma-separated league filter from an API query string."""
     values = parse_qs(query).get("leagues", [])
@@ -149,12 +174,10 @@ def sport_payload(sport: str, leagues: tuple[str, ...] | None = None,
     report_path = REPORTS_DIR / f"{sport}{cache_suffix}_matches.json"
     if refresh or not report_path.exists():
         records, kalshi_count, polymarket_count = build_sport_report(sport, leagues)
-        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(records, indent=2) + "\n")
+        _write_sport_report_cache(report_path, records, kalshi_count, polymarket_count)
     else:
         records = json.loads(report_path.read_text())
-        kalshi_count = None
-        polymarket_count = None
+        kalshi_count, polymarket_count = _cached_source_counts(report_path)
         # Reports written before logo support lack the `teams` field. Refresh
         # them automatically instead of showing permanent initials badges.
         if any(not record.get("teams") or not record.get("kalshi_url") or not record.get("polymarket_us_url")
@@ -164,7 +187,7 @@ def sport_payload(sport: str, leagues: tuple[str, ...] | None = None,
                or record.get("market_breakdown_version") != MARKET_BREAKDOWN_VERSION
                for record in records):
             records, kalshi_count, polymarket_count = build_sport_report(sport, leagues)
-            report_path.write_text(json.dumps(records, indent=2) + "\n")
+            _write_sport_report_cache(report_path, records, kalshi_count, polymarket_count)
     # Older cached reports may predate the stale-event filter. Apply it at
     # read time too, so completed games disappear without needing a refresh.
     records = [record for record in records

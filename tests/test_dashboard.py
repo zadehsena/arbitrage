@@ -1,10 +1,27 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from arbitrage.dashboard import ACCOUNT_SUMMARY_TIMEOUT_SECONDS, SPORT_PAGE_SIZE, _pagination, account_summary
+from arbitrage.dashboard import (
+    ACCOUNT_SUMMARY_TIMEOUT_SECONDS,
+    SPORT_PAGE_SIZE,
+    _cached_source_counts,
+    _pagination,
+    _write_sport_report_cache,
+    account_summary,
+)
 
 
 class DashboardAccountSummaryTest(unittest.TestCase):
+    def test_sport_cache_persists_source_event_totals(self):
+        with TemporaryDirectory() as directory:
+            report_path = Path(directory) / "football_nfl_matches.json"
+            with patch("arbitrage.dashboard.REPORTS_DIR", Path(directory)):
+                _write_sport_report_cache(report_path, [{"title": "Example"}], 31, 32)
+
+            self.assertEqual(_cached_source_counts(report_path), (31, 32))
+
     def test_pagination_bounds_requested_page_size_and_offset(self):
         self.assertEqual(_pagination("offset=25&limit=25"), (25, 25))
         self.assertEqual(_pagination("offset=-1&limit=1000"), (0, SPORT_PAGE_SIZE))

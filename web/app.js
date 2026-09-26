@@ -5,6 +5,7 @@ const notice = document.querySelector('#notice');
 const refresh = document.querySelector('#refresh');
 const home = document.querySelector('#home');
 const matchSummary = document.querySelector('#match-summary');
+const sourceSummary = document.querySelector('#source-summary');
 let activeSport = null;
 let activeLeagues = [];
 let activeLabel = '';
@@ -104,7 +105,12 @@ function orderedBookItems(record, items, labelField) {
     const name = normalizeTeam(team.name);
     const index = unused.findIndex(item => {
       const label = normalizeTeam(item[labelField]);
-      return label === name || label.startsWith(name) || name.startsWith(label);
+      // Kalshi's sports contracts often contain the complete question (for
+      // example, "Will FURIA Esports win …"), while the team slot contains
+      // only the competitor name. Match the embedded team name as well as
+      // the shorter labels used by other venues.
+      return label === name || label.includes(name) || name.includes(label)
+        || label.startsWith(name) || name.startsWith(label);
     });
     return index >= 0 ? unused.splice(index, 1)[0] : null;
   });
@@ -167,11 +173,18 @@ function renderSport(data, append = false) {
   document.querySelector('#sport-title').textContent = sportName;
   matchSummary.textContent = `${sportRecordTotal} matched ${sportName.toLowerCase()} games`;
   document.querySelector('#sidebar-updated').textContent = `Updated ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date())}`;
-  meta.textContent = data.kalshi_events_compared
-    ? `Compared ${data.kalshi_events_compared} Kalshi and ${data.polymarket_events_compared} Polymarket US events`
-    : '';
-  notice.hidden = false;
-  notice.textContent = data.quote_notice || 'Prices must be verified against each venue’s live executable order book and fees.';
+  const sourceTotals = [
+    ['Kalshi', data.kalshi_events_compared],
+    ['Polymarket US', data.polymarket_events_compared],
+  ].map(([venue, count]) => {
+    const hasSourceTotal = count != null && Number.isFinite(Number(count));
+    return { venue, count: hasSourceTotal ? count : sportRecordTotal, label: hasSourceTotal ? 'returned' : 'matched' };
+  });
+  sourceSummary.hidden = false;
+  sourceSummary.innerHTML = sourceTotals.map(({ venue, count, label }) =>
+    `<div><span>${safe(venue)}</span><b>${safe(count)} ${label}</b></div>`).join('');
+  meta.textContent = '';
+  notice.hidden = true;
   if (!records.length) { tableWrap.innerHTML = `<div class="empty"><h2>No matched ${safe(sportName.toLowerCase())} games</h2><p>There are no likely open cross-venue matches in the latest public feeds. Refresh to check again.</p></div>`; return; }
   const loadMore = nextSportOffset == null ? '' : `<div class="load-more"><button id="load-more" type="button">Load 25 more <span>Showing ${records.length} of ${sportRecordTotal}</span></button></div>`;
   tableWrap.innerHTML = `<table class="${activeSport === 'soccer' ? 'three-way-table' : ''}"><colgroup><col class="game-column"><col class="time-column"><col class="book-column"><col class="book-column"><col class="book-column"><col class="book-column"><col class="arbitrage-column"></colgroup><thead><tr><th>Game / Event</th><th>Start time</th><th><span class="book-heading"><b class="venue-icon kalshi">K</b>Kalshi</span></th><th><span class="book-heading"><b class="venue-icon polymarket">◇</b>Polymarket US</span></th><th><span class="book-heading"><b class="venue-icon novig">N</b>Novig</span></th><th><span class="book-heading"><b class="venue-icon prophetx">P</b>ProphetX</span></th><th>Arbitrage</th></tr></thead><tbody>${records.map((record, index) => `<tr class="game-row" data-game-index="${index}" tabindex="0" role="link" aria-label="Open ${safe(record.kalshi_title || 'game')} market breakdown">
@@ -207,6 +220,8 @@ function renderHome(data, opportunityData = {}) {
   tableWrap.classList.add('home-layout');
   document.querySelector('#sport-title').textContent = 'Dashboard';
   matchSummary.textContent = '';
+  sourceSummary.hidden = true;
+  sourceSummary.textContent = '';
   document.querySelector('#sidebar-updated').textContent = `Updated ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(data.updated_at || Date.now()))}`;
   meta.textContent = 'Connected wallet balances · auto-refreshes every 30s';
   notice.hidden = true;

@@ -19,16 +19,20 @@ class SportMappingsTest(unittest.TestCase):
     def test_dashboard_sports_have_public_venue_mappings(self):
         self.assertEqual(
             set(supported_sports()),
-            {"football", "soccer", "hockey", "basketball", "baseball", "tennis"},
+            {"football", "soccer", "hockey", "basketball", "baseball", "mma", "esports", "tennis"},
         )
         self.assertIn(("nhl", "KXNHLGAME"), SPORT_LEAGUE_MAPPINGS["hockey"])
         self.assertIn(("mlb", "KXMLBGAME"), SPORT_LEAGUE_MAPPINGS["baseball"])
         self.assertIn(("nba", "KXNBAGAME"), SPORT_LEAGUE_MAPPINGS["basketball"])
         self.assertIn(("atp", "KXATPMATCH"), SPORT_LEAGUE_MAPPINGS["tennis"])
+        self.assertIn(("ufc", "KXUFCFIGHT"), SPORT_LEAGUE_MAPPINGS["mma"])
+        self.assertIn(("cs2", "KXCS2GAME"), SPORT_LEAGUE_MAPPINGS["esports"])
 
     def test_sidebar_league_categories_are_supported(self):
         self.assertEqual(supported_leagues("football"), ("cfb", "nfl"))
         self.assertEqual(supported_leagues("basketball"), ("nba", "wnba", "cbb"))
+        self.assertEqual(supported_leagues("mma"), ("ufc",))
+        self.assertEqual(supported_leagues("esports"), ("cs2", "lol", "valorant", "dota2", "r6"))
 
     @patch("arbitrage.sports.report_record")
     @patch("arbitrage.sports.match_events")

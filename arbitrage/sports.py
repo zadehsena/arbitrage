@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 from .client import kalshi_open_events_for_series, polymarket_us_league_events
@@ -16,12 +17,19 @@ SPORT_LEAGUE_MAPPINGS: dict[str, tuple[tuple[str, str], ...]] = {
     "hockey": (("nhl", "KXNHLGAME"),),
     "basketball": (("nba", "KXNBAGAME"), ("wnba", "KXWNBAGAME"), ("cbb", "KXNCAABGAME")),
     "baseball": (("mlb", "KXMLBGAME"),),
+    "mma": (("ufc", "KXUFCFIGHT"),),
+    "esports": (
+        ("cs2", "KXCS2GAME"), ("lol", "KXLOLGAME"),
+        ("valorant", "KXVALORANTGAME"), ("dota2", "KXDOTA2GAME"),
+        ("r6", "KXR6GAME"),
+    ),
     "tennis": (
         ("atp", "KXATPMATCH"), ("atp", "KXATPCHALLENGERMATCH"),
         ("wta", "KXWTAMATCH"), ("wta", "KXWTACHALLENGERMATCH"),
     ),
 }
 SPORT_MATCHING_VERSION = 3
+DETAIL_FETCH_WORKERS = 8
 
 # Kalshi shortens many MLB club names in event titles. Expand only complete
 # known names, keeping Chicago and New York clubs distinct before title scoring.
@@ -52,6 +60,8 @@ LIVE_WINDOWS = {
     "hockey": timedelta(hours=4),
     "basketball": timedelta(hours=4),
     "baseball": timedelta(hours=6),
+    "mma": timedelta(hours=6),
+    "esports": timedelta(hours=6),
     "tennis": timedelta(hours=8),
 }
 
@@ -158,7 +168,13 @@ def build_sport_report(sport: str, leagues: tuple[str, ...] | None = None,
     # Tennis feeds often omit players' given names on Kalshi ("Halys") while
     # Polymarket US includes them ("Quentin Halys"). A lower candidate score
     # still requires both opponent names to align and remains review-only.
-    effective_minimum_score = min(minimum_score, 0.50) if sport == "tennis" else minimum_score
+    # Kalshi commonly uses fighter surnames while Polymarket US shows full
+    # names (for example, "Fight Night: Jackson vs Simon" versus "Montel
+    # Jackson vs. Ricky Simon"). Requiring both surnames still leaves these
+    # matches in review-only territory while avoiding a zero-result UFC page.
+    effective_minimum_score = min(minimum_score, 0.45) if sport == "mma" else (
+        min(minimum_score, 0.50) if sport == "tennis" else minimum_score
+    )
     # Match each league independently. This prevents a selected category such
     # as College Football from ever receiving records from the NFL feed.
     records = []
@@ -176,13 +192,19 @@ def build_sport_report(sport: str, leagues: tuple[str, ...] | None = None,
         polymarket_events = list({
             event.get("id") or event.get("slug"): event for event in polymarket_events
         }.values())
-        matches = match_events(kalshi_events, polymarket_events, effective_minimum_score, normalizer)
-        records.extend(
-            {**report_record(kalshi_event, poly_event, score), "league": polymarket_league,
-             "matching_version": SPORT_MATCHING_VERSION}
-            for kalshi_event, poly_event, score in matches
-            if is_current_sport_record({"start_time": poly_event.get("startDate")}, sport)
-        )
+        matches = [match for match in match_events(
+            kalshi_events, polymarket_events, effective_minimum_score, normalizer
+        ) if is_current_sport_record({"start_time": match[1].get("startDate")}, sport)]
+
+        # Each matched event needs venue-specific detail requests for its
+        # market breakdown, URLs, and team metadata. Fetch a small bounded
+        # batch concurrently instead of waiting for every pair in sequence.
+        with ThreadPoolExecutor(max_workers=DETAIL_FETCH_WORKERS) as executor:
+            details = executor.map(lambda match: report_record(*match), matches)
+            records.extend(
+                {**record, "league": polymarket_league, "matching_version": SPORT_MATCHING_VERSION}
+                for record in details
+            )
         kalshi_count += len(kalshi_events)
         polymarket_count += len(polymarket_events)
     return records, kalshi_count, polymarket_count
