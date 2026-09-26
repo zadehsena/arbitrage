@@ -23,12 +23,76 @@ def url_slug(value: str) -> str:
 
 KALSHI_SERIES_BY_LEAGUE = {"cfb": "KXNCAAFGAME", "nfl": "KXNFLGAME"}
 
+# Kalshi groups a game's moneyline, spread, and total into separate event
+# series. The dashboard originally queried only KXMLBGAME, so it could never
+# display the contracts visible under a KXMLBSPREAD market URL.
+KALSHI_COMPANION_SERIES = {
+    "KXMLBGAME": ("KXMLBSPREAD", "KXMLBTOTAL"),
+}
+MARKET_BREAKDOWN_VERSION = 3
+VENUES = ("kalshi", "polymarket_us", "novig", "prophetx")
+
 
 def moneyline_markets(event: dict) -> list[dict]:
     markets = [market for market in event.get("markets", [])
                if market.get("sportsMarketType") in {"moneyline", "soccer_team_full_time_winner"}]
     return markets or [market for market in event.get("markets", [])
                        if "who will win in the upcoming" in market.get("question", "").lower()]
+
+
+def market_category(market: dict) -> str:
+    """Normalize venue-specific sports market labels for the detail view."""
+    value = " ".join(str(market.get(field, "")) for field in ("sportsMarketType", "title", "question")).lower()
+    # Prefer the wording of the market question over a venue's broad internal
+    # type: Polymarket US can label a spread as a moneyline instrument.
+    if "cover" in value or "spread" in value or "handicap" in value or "wins by" in value:
+        return "spread"
+    if "total bases" in value or "record at least" in value:
+        return "props"
+    if "total" in value or "over/under" in value or "over under" in value:
+        return "total"
+    if ("moneyline" in value or "full_time_winner" in value or "will win" in value
+            or re.search(r"\bwins?\b", value)):
+        return "moneyline"
+    return "props"
+
+
+def companion_event_tickers(event_ticker: str, series_ticker: str) -> list[str]:
+    """Return companion spread/total event tickers for a known game series."""
+    suffix = event_ticker.removeprefix(series_ticker)
+    if suffix == event_ticker:
+        return []
+    return [series + suffix for series in KALSHI_COMPANION_SERIES.get(series_ticker, ())]
+
+
+def market_period(label: object) -> str:
+    text = str(label or "").lower()
+    if "first 5" in text:
+        return "first_5_innings"
+    if "inning" in text:
+        return "inning"
+    if "half" in text or "quarter" in text or "period" in text:
+        return "partial_game"
+    return "full_game"
+
+
+def market_catalog(kalshi_markets: list[dict], polymarket_markets: list[dict]) -> list[dict]:
+    """Adapt venue payloads to one extensible, review-first market schema."""
+    catalog = []
+    for venue, markets in (("kalshi", kalshi_markets), ("polymarket_us", polymarket_markets)):
+        for market in markets:
+            label = market.get("market") or market.get("contract") or "Market"
+            quote = ({"yes_ask": market.get("yes_ask"), "no_ask": market.get("no_ask")}
+                     if venue == "kalshi" else {"displayed_quote": market.get("displayed_quote")})
+            catalog.append({
+                "market_type": market.get("category", "props"),
+                "period": market_period(label),
+                "label": label,
+                "selection": market.get("outcome"),
+                "match_status": "review",
+                "quotes": {**{name: None for name in VENUES}, venue: quote},
+            })
+    return catalog
 
 
 def match_events(kalshi_events: list[dict], poly_events: list[dict], minimum_score: float,
@@ -49,13 +113,21 @@ def match_events(kalshi_events: list[dict], poly_events: list[dict], minimum_sco
 def report_record(kalshi_summary: dict, poly: dict, score: float) -> dict:
     kalshi = kalshi_event(kalshi_summary["event_ticker"])
     series = kalshi_series(kalshi["series_ticker"])
+    kalshi_markets = list(kalshi.get("markets", []))
+    for ticker in companion_event_tickers(kalshi["event_ticker"], kalshi["series_ticker"]):
+        try:
+            kalshi_markets.extend(kalshi_event(ticker).get("markets", []))
+        except Exception:
+            # A companion event is not guaranteed to be listed; preserve the
+            # available moneyline data rather than failing the whole matchup.
+            continue
     # League feeds can omit teams. The public event endpoint provides the
     # venue-supplied team names and logos used by the dashboard.
     poly_detail = polymarket_us_event(poly["slug"])
     kalshi_odds = [{"contract": market.get("title"), "ticker": market.get("ticker"),
                     "yes_ask": amount(market.get("yes_ask_dollars")),
                     "no_ask": amount(market.get("no_ask_dollars"))}
-                   for market in kalshi.get("markets", [])]
+                   for market in kalshi_markets]
     poly_odds = []
     for market in moneyline_markets(poly):
         sides = market.get("marketSides", [])
@@ -71,6 +143,24 @@ def report_record(kalshi_summary: dict, poly: dict, score: float) -> dict:
                           "displayed_quote": amount(side.get("quote", {}).get("value")),
                           "market_slug": market.get("slug")}
                          for side in sides)
+    kalshi_breakdown = [{
+        "category": market_category(market),
+        "market": market.get("title") or market.get("subtitle") or market.get("ticker"),
+        "yes_ask": amount(market.get("yes_ask_dollars")),
+        "no_ask": amount(market.get("no_ask_dollars")),
+    } for market in kalshi_markets]
+    polymarket_breakdown = []
+    for market in poly_detail.get("markets") or poly.get("markets", []):
+        for side in market.get("marketSides", []):
+            outcome = (side.get("team", {}).get("safeName") or side.get("team", {}).get("name")
+                       or side.get("description") or "Outcome")
+            polymarket_breakdown.append({
+                "category": market_category(market),
+                "market": market.get("question") or market.get("title") or market.get("slug"),
+                "outcome": outcome,
+                "displayed_quote": amount(side.get("quote", {}).get("value")),
+            })
+    normalized_catalog = market_catalog(kalshi_breakdown, polymarket_breakdown)
     return {
         "similarity": score,
         "kalshi_event_ticker": kalshi["event_ticker"],
@@ -86,6 +176,10 @@ def report_record(kalshi_summary: dict, poly: dict, score: float) -> dict:
         "start_time": poly.get("startDate"),
         "kalshi_moneyline_asks": kalshi_odds,
         "polymarket_us_displayed_moneyline_quotes": poly_odds,
+        "kalshi_market_breakdown": kalshi_breakdown,
+        "polymarket_us_market_breakdown": polymarket_breakdown,
+        "market_catalog": normalized_catalog,
+        "market_breakdown_version": MARKET_BREAKDOWN_VERSION,
         "teams": [{
             "name": team.get("safeName") or team.get("name"),
             "nickname": team.get("alias"),

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime, timedelta
 
 from .client import kalshi_open_events_for_series, polymarket_us_league_events
 from .football import match_events, report_record
@@ -41,6 +42,18 @@ MLB_TEAM_ALIASES = {
     "Toronto": "Toronto Blue Jays", "Washington": "Washington Nationals",
 }
 
+# Public league feeds can retain an event as active after it has finished.
+# These windows comfortably include an in-progress event, then remove a stale
+# quote once a game could no longer plausibly be live.
+LIVE_WINDOWS = {
+    "football": timedelta(hours=5),
+    "soccer": timedelta(hours=3),
+    "hockey": timedelta(hours=4),
+    "basketball": timedelta(hours=4),
+    "baseball": timedelta(hours=6),
+    "tennis": timedelta(hours=8),
+}
+
 
 def normalize_mlb_title(title: str) -> str:
     """Expand Kalshi's MLB title abbreviations for matching only."""
@@ -62,6 +75,21 @@ def normalize_mlb_title(title: str) -> str:
 
 def supported_sports() -> tuple[str, ...]:
     return tuple(SPORT_LEAGUE_MAPPINGS)
+
+
+def is_current_sport_record(record: dict, sport: str, now: datetime | None = None) -> bool:
+    """Keep upcoming and plausibly live events; drop completed stale records."""
+    start_time = record.get("start_time")
+    if not start_time:
+        return True
+    try:
+        start = datetime.fromisoformat(str(start_time).replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    current_time = now or datetime.now(UTC)
+    return start + LIVE_WINDOWS[sport] > current_time
 
 
 def build_sport_report(sport: str, max_kalshi_events: int = 500,
@@ -95,5 +123,6 @@ def build_sport_report(sport: str, max_kalshi_events: int = 500,
     effective_minimum_score = min(minimum_score, 0.50) if sport == "tennis" else minimum_score
     matches = match_events(kalshi_events, polymarket_events, effective_minimum_score, normalizer)
     records = [report_record(kalshi_event, poly_event, score)
-               for kalshi_event, poly_event, score in matches]
+               for kalshi_event, poly_event, score in matches
+               if is_current_sport_record({"start_time": poly_event.get("startDate")}, sport)]
     return records, len(kalshi_events), len(polymarket_events)
