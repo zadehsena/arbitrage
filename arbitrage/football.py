@@ -128,6 +128,11 @@ def report_record(kalshi_summary: dict, poly: dict, score: float) -> dict:
                     "yes_ask": amount(market.get("yes_ask_dollars")),
                     "no_ask": amount(market.get("no_ask_dollars"))}
                    for market in kalshi_markets]
+    kalshi_expected_expiration = min(
+        (str(market["expected_expiration_time"]) for market in kalshi.get("markets", [])
+         if market.get("expected_expiration_time")),
+        default=None,
+    )
     poly_odds = []
     for market in moneyline_markets(poly):
         sides = market.get("marketSides", [])
@@ -174,6 +179,7 @@ def report_record(kalshi_summary: dict, poly: dict, score: float) -> dict:
                             f"{poly_detail.get('primaryTag', {}).get('slug') or poly.get('primaryTag', {}).get('slug', '')}/"
                             f"{poly['slug']}",
         "start_time": poly.get("startDate"),
+        "kalshi_expected_expiration_time": kalshi_expected_expiration,
         "kalshi_moneyline_asks": kalshi_odds,
         "polymarket_us_displayed_moneyline_quotes": poly_odds,
         "kalshi_market_breakdown": kalshi_breakdown,

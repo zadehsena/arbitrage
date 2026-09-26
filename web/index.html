@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cross-Venue Research</title>
-  <link rel="stylesheet" href="/styles.css?v=20260926-6">
+  <link rel="stylesheet" href="/styles.css?v=20260926-9">
 </head>
 
 <body>
@@ -16,12 +16,43 @@
     </nav>
     <p class="section-label">SPORTS</p>
     <nav class="sports-nav" aria-label="Sports">
-      <button class="tab" data-sport="baseball"><i>⚾</i> Baseball</button>
-      <button class="tab" data-sport="basketball"><i>🏀</i> Basketball</button>
-      <button class="tab" data-sport="football"><i>🏈</i> Football</button>
-      <button class="tab" data-sport="hockey"><i>🏒</i> Hockey</button>
-      <button class="tab" data-sport="soccer"><i>⚽</i> Soccer</button>
-      <button class="tab" data-sport="tennis"><i>🎾</i> Tennis</button>
+      <div class="sport-group">
+        <button class="sport-group-toggle" type="button" aria-expanded="false" aria-controls="baseball-options"><svg class="sport-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M6 5c4 3 4 11 0 14M18 5c-4 3-4 11 0 14M8 7l2 1m-2 3 2 1m4-5 2-1m-2 6 2-1"/></svg> Baseball <b>⌄</b></button>
+        <div class="sport-options" id="baseball-options" hidden><button class="tab" data-sport="baseball" data-leagues="mlb" data-label="MLB">MLB</button></div>
+      </div>
+      <div class="sport-group">
+        <button class="sport-group-toggle" type="button" aria-expanded="false" aria-controls="basketball-options"><svg class="sport-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c4 4 4 14 0 18M12 3c-4 4-4 14 0 18"/></svg> Basketball <b>⌄</b></button>
+        <div class="sport-options" id="basketball-options" hidden>
+          <button class="tab" data-sport="basketball" data-leagues="nba,cbb" data-label="Men's Basketball">Men's</button>
+          <button class="tab" data-sport="basketball" data-leagues="wnba" data-label="Women's Basketball">Women's</button>
+        </div>
+      </div>
+      <div class="sport-group">
+        <button class="sport-group-toggle" type="button" aria-expanded="false" aria-controls="football-options"><svg class="sport-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 18c-3-3 0-9 5-12s10-2 11 1c1 4-3 9-8 11s-7 2-8 0Z"/><path d="m9 8 7 7M12 10l-2 2m5 1-2 2m1-5 2-2"/></svg> Football <b>⌄</b></button>
+        <div class="sport-options" id="football-options" hidden>
+          <button class="tab" data-sport="football" data-leagues="cfb" data-label="College Football">College</button>
+          <button class="tab" data-sport="football" data-leagues="nfl" data-label="Pro Football">Pro</button>
+        </div>
+      </div>
+      <div class="sport-group">
+        <button class="sport-group-toggle" type="button" aria-expanded="false" aria-controls="hockey-options"><svg class="sport-icon" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="10" cy="8" rx="6" ry="3"/><path d="M4 8v5c0 2 12 2 12 0V8M16 15h3l2 4h-8l-2-4 3-7"/></svg> Hockey <b>⌄</b></button>
+        <div class="sport-options" id="hockey-options" hidden><button class="tab" data-sport="hockey" data-leagues="nhl" data-label="NHL">NHL</button></div>
+      </div>
+      <div class="sport-group">
+        <button class="sport-group-toggle" type="button" aria-expanded="false" aria-controls="soccer-options"><svg class="sport-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m12 7 4 3-1 5h-6l-1-5 4-3Zm0 0V3m4 3 4 2m-5 7 3 4m-9-4-3 4m-1-9-4-2"/></svg> Soccer <b>⌄</b></button>
+        <div class="sport-options" id="soccer-options" hidden>
+          <button class="tab" data-sport="soccer" data-leagues="epl" data-label="Premier League">Premier League</button>
+          <button class="tab" data-sport="soccer" data-leagues="mls" data-label="MLS">MLS</button>
+          <button class="tab" data-sport="soccer" data-leagues="ucl" data-label="Champions League">Champions League</button>
+        </div>
+      </div>
+      <div class="sport-group">
+        <button class="sport-group-toggle" type="button" aria-expanded="false" aria-controls="tennis-options"><svg class="sport-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M5 5c7 1 12 6 14 14M19 5C12 6 7 11 5 19"/></svg> Tennis <b>⌄</b></button>
+        <div class="sport-options" id="tennis-options" hidden>
+          <button class="tab" data-sport="tennis" data-leagues="atp" data-label="Men's Tennis">Men's</button>
+          <button class="tab" data-sport="tennis" data-leagues="wta" data-label="Women's Tennis">Women's</button>
+        </div>
+      </div>
     </nav>
     <div class="live-card"><span class="pulse"></span>
       <div><strong>Live markets</strong><small>Public feeds only</small><small id="sidebar-updated">Updating…</small>
@@ -38,19 +69,17 @@
     </header>
     <section class="content">
       <div class="sport-header">
-        <div>
-          <h1 id="sport-title">Football <span>⌄</span></h1>
-        </div>
-        <div class="header-actions"><button class="control">▣ Today⌄</button><button class="control">≡ Filters</button>
+        <div class="sport-title-row">
+          <h1 id="sport-title">Football</h1>
+          <span id="match-summary" class="match-summary"></span>
         </div>
       </div>
       <section id="meta" class="meta" aria-live="polite">Loading matched games…</section>
-      <section id="notice" class="notice">Prices must be verified against each venue’s live executable order book and
-        fees.</section>
+      <section id="notice" class="notice" hidden></section>
       <section id="table-wrap" class="table-wrap" aria-live="polite"></section>
     </section>
   </main>
-  <script src="/app.js?v=20260926-6"></script>
+  <script src="/app.js?v=20260926-18"></script>
 </body>
 
 </html>

@@ -3,6 +3,8 @@ const query = new URLSearchParams(location.search);
 const sport = query.get('sport');
 const kalshiTicker = query.get('kalshi');
 const polymarketSlug = query.get('polymarket');
+const leagues = query.get('leagues');
+const offset = query.get('offset') || '0';
 const safe = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const price = value => value == null ? '—' : `$${Number(value).toFixed(3)}`;
 const startTime = value => value ? new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : 'Time unavailable';
@@ -39,7 +41,9 @@ function render(record) {
 
 async function load() {
   if (!sport || !kalshiTicker || !polymarketSlug) throw new Error('This game link is incomplete. Return to the market board and select the game again.');
-  const response = await fetch(`/api/sports/${encodeURIComponent(sport)}`);
+  const requestQuery = new URLSearchParams({ offset, limit: '25' });
+  if (leagues) requestQuery.set('leagues', leagues);
+  const response = await fetch(`/api/sports/${encodeURIComponent(sport)}?${requestQuery}`);
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Unable to load this game.');
   const record = (data.records || []).find(item => item.kalshi_event_ticker === kalshiTicker && item.polymarket_us_event_slug === polymarketSlug);

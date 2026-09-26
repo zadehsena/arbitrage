@@ -23,14 +23,14 @@ def load_dotenv(path: str = ".env") -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def _json(request: Request) -> object:
+def _json(request: Request, timeout: float = 20) -> object:
     import certifi
     context = ssl.create_default_context(cafile=certifi.where())
-    with urlopen(request, timeout=20, context=context) as response:
+    with urlopen(request, timeout=timeout, context=context) as response:
         return json.load(response)
 
 
-def kalshi_balance() -> object:
+def kalshi_balance(timeout: float = 20) -> object:
     """Fetch balance only. Requires a Kalshi key ID plus a PEM path or Base64 PEM."""
     key_id = os.environ["KALSHI_API_KEY_ID"]
     encoded_key = os.getenv("KALSHI_PRIVATE_KEY_B64")
@@ -56,7 +56,7 @@ def kalshi_balance() -> object:
         "KALSHI-ACCESS-SIGNATURE": base64.b64encode(signature).decode(),
         "KALSHI-ACCESS-TIMESTAMP": timestamp,
     }
-    return _json(Request(KALSHI_BASE_URL + "/portfolio/balance", headers=headers))
+    return _json(Request(KALSHI_BASE_URL + "/portfolio/balance", headers=headers), timeout)
 
 
 def polymarket_positions() -> object:
@@ -64,12 +64,12 @@ def polymarket_positions() -> object:
     return polymarket_us_get("/v1/portfolio/positions")
 
 
-def polymarket_us_balances() -> object:
+def polymarket_us_balances(timeout: float = 20) -> object:
     """Fetch Polymarket US balances only; no trades, transfers, or writes occur."""
-    return polymarket_us_get("/v1/account/balances")
+    return polymarket_us_get("/v1/account/balances", timeout)
 
 
-def polymarket_us_get(path: str) -> object:
+def polymarket_us_get(path: str, timeout: float = 20) -> object:
     key_id = os.environ["POLYMARKET_US_KEY_ID"]
     secret = os.environ["POLYMARKET_US_SECRET_KEY"]
     timestamp = str(int(time.time() * 1000))
@@ -85,4 +85,4 @@ def polymarket_us_get(path: str) -> object:
         "X-PM-Timestamp": timestamp,
         "X-PM-Signature": signature,
     }
-    return _json(Request("https://api.polymarket.us" + path, headers=headers))
+    return _json(Request("https://api.polymarket.us" + path, headers=headers), timeout)

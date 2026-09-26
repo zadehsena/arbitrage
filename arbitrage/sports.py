@@ -21,6 +21,7 @@ SPORT_LEAGUE_MAPPINGS: dict[str, tuple[tuple[str, str], ...]] = {
         ("wta", "KXWTAMATCH"), ("wta", "KXWTACHALLENGERMATCH"),
     ),
 }
+SPORT_MATCHING_VERSION = 3
 
 # Kalshi shortens many MLB club names in event titles. Expand only complete
 # known names, keeping Chicago and New York clubs distinct before title scoring.
@@ -73,12 +74,45 @@ def normalize_mlb_title(title: str) -> str:
     return normalized
 
 
+def normalize_cfb_title(title: str) -> str:
+    """Align common college-football team abbreviations before title scoring."""
+    normalized = re.sub(r"\bUAlbany\b", "University at Albany", title, flags=re.IGNORECASE)
+    # Kalshi commonly abbreviates the university suffix (for example, "NC
+    # St."), while Polymarket spells out "State". This only affects matching;
+    # venue titles remain unchanged in the dashboard.
+    normalized = re.sub(r"\bSt\.?(?=\s|$)", "State", normalized, flags=re.IGNORECASE)
+    # "Southern" is the conventional short form for Southern University in
+    # the CFB feeds. Avoid duplicating the full venue label when it is present.
+    return re.sub(r"\bSouthern\b(?!\s+University\b)", "Southern University", normalized,
+                  flags=re.IGNORECASE)
+
+
 def supported_sports() -> tuple[str, ...]:
     return tuple(SPORT_LEAGUE_MAPPINGS)
 
 
+def supported_leagues(sport: str) -> tuple[str, ...]:
+    """Return the public league identifiers available for one sport."""
+    try:
+        return tuple(dict.fromkeys(league for league, _ in SPORT_LEAGUE_MAPPINGS[sport]))
+    except KeyError as error:
+        raise ValueError(f"unsupported sport: {sport}") from error
+
+
 def is_current_sport_record(record: dict, sport: str, now: datetime | None = None) -> bool:
     """Keep upcoming and plausibly live events; drop completed stale records."""
+    current_time = now or datetime.now(UTC)
+    # Kalshi provides an event-specific expected expiration that is a better
+    # completed-game cutoff than a generic sport-duration estimate.
+    expected_expiration = record.get("kalshi_expected_expiration_time")
+    if expected_expiration:
+        try:
+            expected = datetime.fromisoformat(str(expected_expiration).replace("Z", "+00:00"))
+            if expected.tzinfo is None:
+                expected = expected.replace(tzinfo=UTC)
+            return expected > current_time
+        except ValueError:
+            pass
     start_time = record.get("start_time")
     if not start_time:
         return True
@@ -88,11 +122,15 @@ def is_current_sport_record(record: dict, sport: str, now: datetime | None = Non
         return True
     if start.tzinfo is None:
         start = start.replace(tzinfo=UTC)
-    current_time = now or datetime.now(UTC)
-    return start + LIVE_WINDOWS[sport] > current_time
+    # Older CFB cache records may not yet contain Kalshi's expected expiration.
+    # Three hours mirrors that venue-provided cutoff without forcing a full
+    # report rebuild whenever the College Football tab opens.
+    live_window = timedelta(hours=3) if sport == "football" and record.get("league") == "cfb" else LIVE_WINDOWS[sport]
+    return start + live_window > current_time
 
 
-def build_sport_report(sport: str, max_kalshi_events: int = 500,
+def build_sport_report(sport: str, leagues: tuple[str, ...] | None = None,
+                       max_kalshi_events: int = 500,
                        minimum_score: float = 0.72) -> tuple[list[dict], int, int]:
     """Return likely matched open game events for one dashboard sport.
 
@@ -105,24 +143,46 @@ def build_sport_report(sport: str, max_kalshi_events: int = 500,
     if max_kalshi_events < 1 or not 0 <= minimum_score <= 1:
         raise ValueError("max_kalshi_events must be positive and minimum_score must be from 0 to 1")
 
-    kalshi_events = []
-    polymarket_events = []
-    for polymarket_league, kalshi_series in mappings:
-        kalshi_events.extend(kalshi_open_events_for_series(kalshi_series, max_kalshi_events))
-        polymarket_events.extend(
-            event for event in polymarket_us_league_events(polymarket_league, max_kalshi_events)
-            if event.get("active") and not event.get("closed")
-        )
-    # Tennis has multiple Kalshi match series for one ATP/WTA feed. Retain each
-    # Polymarket US event once before attempting title matching.
-    polymarket_events = list({event.get("id") or event.get("slug"): event for event in polymarket_events}.values())
-    normalizer = normalize_mlb_title if sport == "baseball" else None
+    if leagues:
+        available_leagues = {league for league, _ in mappings}
+        unknown_leagues = set(leagues) - available_leagues
+        if unknown_leagues:
+            raise ValueError(
+                f"no {sport} mapping configured for: {', '.join(sorted(unknown_leagues))}")
+        mappings = tuple(mapping for mapping in mappings if mapping[0] in leagues)
+
+    normalizer = {
+        "baseball": normalize_mlb_title,
+        "football": normalize_cfb_title if leagues == ("cfb",) else None,
+    }.get(sport)
     # Tennis feeds often omit players' given names on Kalshi ("Halys") while
     # Polymarket US includes them ("Quentin Halys"). A lower candidate score
     # still requires both opponent names to align and remains review-only.
     effective_minimum_score = min(minimum_score, 0.50) if sport == "tennis" else minimum_score
-    matches = match_events(kalshi_events, polymarket_events, effective_minimum_score, normalizer)
-    records = [report_record(kalshi_event, poly_event, score)
-               for kalshi_event, poly_event, score in matches
-               if is_current_sport_record({"start_time": poly_event.get("startDate")}, sport)]
-    return records, len(kalshi_events), len(polymarket_events)
+    # Match each league independently. This prevents a selected category such
+    # as College Football from ever receiving records from the NFL feed.
+    records = []
+    kalshi_count = 0
+    polymarket_count = 0
+    for polymarket_league in dict.fromkeys(league for league, _ in mappings):
+        kalshi_events = [event for league, series in mappings if league == polymarket_league
+                         for event in kalshi_open_events_for_series(series, max_kalshi_events)]
+        polymarket_events = [
+            event for event in polymarket_us_league_events(polymarket_league, max_kalshi_events)
+            if event.get("active") and not event.get("closed")
+        ]
+        # Tennis has multiple Kalshi match series for one ATP/WTA feed. Retain
+        # each Polymarket US event once before attempting title matching.
+        polymarket_events = list({
+            event.get("id") or event.get("slug"): event for event in polymarket_events
+        }.values())
+        matches = match_events(kalshi_events, polymarket_events, effective_minimum_score, normalizer)
+        records.extend(
+            {**report_record(kalshi_event, poly_event, score), "league": polymarket_league,
+             "matching_version": SPORT_MATCHING_VERSION}
+            for kalshi_event, poly_event, score in matches
+            if is_current_sport_record({"start_time": poly_event.get("startDate")}, sport)
+        )
+        kalshi_count += len(kalshi_events)
+        polymarket_count += len(polymarket_events)
+    return records, kalshi_count, polymarket_count

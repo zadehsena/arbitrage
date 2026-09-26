@@ -4,10 +4,16 @@ const meta = document.querySelector('#meta');
 const notice = document.querySelector('#notice');
 const refresh = document.querySelector('#refresh');
 const home = document.querySelector('#home');
+const matchSummary = document.querySelector('#match-summary');
 let activeSport = null;
+let activeLeagues = [];
+let activeLabel = '';
 let latestRecords = [];
+let nextSportOffset = null;
+let sportRecordTotal = 0;
 const refreshingSports = new Set();
-const oddsRefreshIntervalMs = 15_000;
+const oddsRefreshIntervalMs = 60_000;
+const sportPageSize = 25;
 const walletRefreshIntervalMs = 30_000;
 let walletRefreshInFlight = false;
 
@@ -50,8 +56,40 @@ const mlbTeamAliases = {
 // on the other. Keep those labels in the same team slot.
 const teamAliases = {
   nmstate: 'newmexicost',
+  fcdallas: 'dallas',
+  realsaltlake: 'saltlake',
   pitsteelers: 'pittsburgh',
   clebrowns: 'cleveland',
+  indcolts: 'indianapolis',
+  wascommanders: 'washington',
+  aricardinals: 'arizona',
+  nygiants: 'newyorkg',
+  nepatriots: 'newengland',
+  bufbills: 'buffalo',
+  nyjets: 'newyorkj',
+  chibears: 'chicago',
+  dalcowboys: 'dallas',
+  houtexans: 'houston',
+  larams: 'losangelesr',
+  phieagles: 'philadelphia',
+  gbpackers: 'greenbay',
+  tbbuccaneers: 'tampabay',
+  tentitans: 'tennessee',
+  balravens: 'baltimore',
+  jacjaguars: 'jacksonville',
+  cinbengals: 'cincinnati',
+  miadolphins: 'miami',
+  minvikings: 'minnesota',
+  kcchiefs: 'kansascity',
+  lvraiders: 'lasvegas',
+  lachargers: 'losangelesc',
+  seaseahawks: 'seattle',
+  denbroncos: 'denver',
+  sf49ers: 'sanfrancisco',
+  detlions: 'detroit',
+  carpanthers: 'carolina',
+  atlfalcons: 'atlanta',
+  nosaints: 'neworleans',
 };
 
 function normalizeTeam(value) {
@@ -89,44 +127,62 @@ function pairForBook(record, items, labelField, priceField, venueUrl, venueName)
     if (!item) return '<span class="outcome-tile"><span class="price unavailable">—</span></span>';
     const value = Number(item[priceField]);
     const tone = Number.isFinite(value) && value < 0.5 ? 'down' : 'up';
-    const isDraw = /^(draw|tie)/i.test(String(item[labelField]));
-    return `<span class="outcome-tile"><span class="price ${tone}" title="${safe(item[labelField])}">${price(item[priceField])}</span>${isDraw ? '<small>Draw</small>' : ''}</span>`;
+    return `<span class="outcome-tile"><span class="price ${tone}" title="${safe(item[labelField])}">${price(item[priceField])}</span></span>`;
   }).join('');
   if (!venueUrl) return `<div class="book-pair">${tiles}</div>`;
   return `<a class="book-link" href="${safe(venueUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Open this event on ${safe(venueName)}"><span class="book-pair">${tiles}</span></a>`;
 }
 
+function numericQuote(value) {
+  // A missing quote is not a zero-cost outcome. Treat null, undefined, and an
+  // empty string as unavailable before doing any arbitrage arithmetic.
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function arbitrageCell(record) {
   const kalshi = orderedBookItems(record, record.kalshi_moneyline_asks, 'contract')
-    .map(item => Number(item?.yes_ask));
+    .map(item => numericQuote(item?.yes_ask));
   const polymarket = orderedBookItems(record, record.polymarket_us_displayed_moneyline_quotes, 'outcome')
-    .map(item => Number(item?.displayed_quote));
+    .map(item => numericQuote(item?.displayed_quote));
   if (kalshi.length !== 2 || polymarket.length !== 2) return '<span class="no-arb">3-way review</span>';
+  if ([...kalshi, ...polymarket].some(quote => quote == null)) {
+    return '<span class="no-arb">Incomplete</span>';
+  }
   const totals = [kalshi[0] + polymarket[1], kalshi[1] + polymarket[0]].filter(Number.isFinite);
   const bestTotal = Math.min(...totals);
   if (!Number.isFinite(bestTotal) || bestTotal >= 1) return '<span class="no-arb">—</span>';
-  return `<div class="arb"><strong>+${((1 - bestTotal) * 100).toFixed(2)}%</strong><small>Unverified</small></div>`;
+  return `<div class="arb"><strong>+${((1 - bestTotal) * 100).toFixed(2)}%</strong></div>`;
 }
 
-function renderSport(data) {
-  const records = data.records || [];
-  latestRecords = records;
-  const sportName = data.sport[0].toUpperCase() + data.sport.slice(1);
-  document.querySelector('#sport-title').innerHTML = `${safe(sportName)} <span>⌄</span>`;
+function renderSport(data, append = false) {
+  const pageRecords = data.records || [];
+  latestRecords = append ? [...latestRecords, ...pageRecords] : pageRecords;
+  nextSportOffset = data.next_offset;
+  sportRecordTotal = data.total_records ?? latestRecords.length;
+  const records = latestRecords;
+  tableWrap.classList.remove('home-layout');
+  const sportName = activeLabel || data.sport[0].toUpperCase() + data.sport.slice(1);
+  document.querySelector('#sport-title').textContent = sportName;
+  matchSummary.textContent = `${sportRecordTotal} matched ${sportName.toLowerCase()} games`;
   document.querySelector('#sidebar-updated').textContent = `Updated ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date())}`;
-  meta.textContent = `${records.length} matched ${sportName.toLowerCase()} games${data.kalshi_events_compared ? ` · compared ${data.kalshi_events_compared} Kalshi and ${data.polymarket_events_compared} Polymarket US events` : ''} · auto-refreshes every 15s`;
-  notice.textContent = data.quote_notice;
+  meta.textContent = data.kalshi_events_compared
+    ? `Compared ${data.kalshi_events_compared} Kalshi and ${data.polymarket_events_compared} Polymarket US events`
+    : '';
+  notice.hidden = false;
+  notice.textContent = data.quote_notice || 'Prices must be verified against each venue’s live executable order book and fees.';
   if (!records.length) { tableWrap.innerHTML = `<div class="empty"><h2>No matched ${safe(sportName.toLowerCase())} games</h2><p>There are no likely open cross-venue matches in the latest public feeds. Refresh to check again.</p></div>`; return; }
-  tableWrap.innerHTML = `<table><colgroup><col class="game-column"><col class="time-column"><col class="market-column"><col class="book-column"><col class="book-column"><col class="book-column"><col class="book-column"><col class="arbitrage-column"></colgroup><thead><tr><th>Game / Event</th><th>Start time</th><th>Market</th><th><span class="book-heading"><b class="venue-icon kalshi">K</b>Kalshi</span></th><th><span class="book-heading"><b class="venue-icon polymarket">◇</b>Polymarket US</span></th><th><span class="book-heading"><b class="venue-icon novig">N</b>Novig</span></th><th><span class="book-heading"><b class="venue-icon prophetx">P</b>ProphetX</span></th><th>Arbitrage</th></tr></thead><tbody>${records.map((record, index) => `<tr class="game-row" data-game-index="${index}" tabindex="0" role="link" aria-label="Open ${safe(record.kalshi_title || 'game')} market breakdown">
+  const loadMore = nextSportOffset == null ? '' : `<div class="load-more"><button id="load-more" type="button">Load 25 more <span>Showing ${records.length} of ${sportRecordTotal}</span></button></div>`;
+  tableWrap.innerHTML = `<table class="${activeSport === 'soccer' ? 'three-way-table' : ''}"><colgroup><col class="game-column"><col class="time-column"><col class="book-column"><col class="book-column"><col class="book-column"><col class="book-column"><col class="arbitrage-column"></colgroup><thead><tr><th>Game / Event</th><th>Start time</th><th><span class="book-heading"><b class="venue-icon kalshi">K</b>Kalshi</span></th><th><span class="book-heading"><b class="venue-icon polymarket">◇</b>Polymarket US</span></th><th><span class="book-heading"><b class="venue-icon novig">N</b>Novig</span></th><th><span class="book-heading"><b class="venue-icon prophetx">P</b>ProphetX</span></th><th>Arbitrage</th></tr></thead><tbody>${records.map((record, index) => `<tr class="game-row" data-game-index="${index}" tabindex="0" role="link" aria-label="Open ${safe(record.kalshi_title || 'game')} market breakdown">
     <td><div class="game-teams">${teamsForRecord(record).map(teamMarkup).join('')}</div></td>
     <td><span class="start">${safe(startTime(record.start_time))}</span></td>
-    <td><span class="label">Moneyline</span></td>
     <td>${pairForBook(record, record.kalshi_moneyline_asks, 'contract', 'yes_ask', record.kalshi_url, 'Kalshi')}</td>
     <td>${pairForBook(record, record.polymarket_us_displayed_moneyline_quotes, 'outcome', 'displayed_quote', record.polymarket_us_url, 'Polymarket US')}</td>
     <td class="unavailable-book" aria-label="Novig data not connected"></td>
     <td class="unavailable-book" aria-label="ProphetX data not connected"></td>
     <td>${arbitrageCell(record)}</td>
-  </tr>`).join('')}</tbody></table>`;
+  </tr>`).join('')}</tbody></table>${loadMore}`;
 }
 
 function walletCard(wallet) {
@@ -146,15 +202,22 @@ function renderHome(data, opportunityData = {}) {
   const opportunities = opportunityData.opportunities || [];
   const sportCounts = opportunityData.sport_counts || {};
   latestRecords = [];
+  nextSportOffset = null;
+  sportRecordTotal = 0;
+  tableWrap.classList.add('home-layout');
   document.querySelector('#sport-title').textContent = 'Dashboard';
+  matchSummary.textContent = '';
   document.querySelector('#sidebar-updated').textContent = `Updated ${new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(data.updated_at || Date.now()))}`;
   meta.textContent = 'Connected wallet balances · auto-refreshes every 30s';
-  notice.textContent = 'Estimated edges use displayed quotes only. Verify executable prices, fees, and rules before acting.';
-  const quotePair = quotes => `<div class="book-pair"><span class="price ${Number(quotes?.[0]) < .5 ? 'down' : 'up'}">${price(quotes?.[0])}</span><span class="price ${Number(quotes?.[1]) < .5 ? 'down' : 'up'}">${price(quotes?.[1])}</span></div>`;
-  const opportunitiesTable = opportunities.length ? opportunities.map(row => `<tr><td>${row.teams?.length ? `<div class="game-teams">${row.teams.map(teamMarkup).join('')}</div>` : `<span class="game">${safe(row.title)}</span>`}</td><td><span class="start">${safe(startTime(row.start_time))}</span></td><td><span class="label">Moneyline</span></td><td>${quotePair(row.kalshi)}</td><td>${quotePair(row.polymarket_us)}</td><td class="unavailable-book"></td><td class="unavailable-book"></td><td>${row.edge ? `<div class="arb"><strong>+${(row.edge * 100).toFixed(2)}%</strong><small>Unverified</small></div>` : '<span class="no-arb">—</span>'}</td></tr>`).join('') : '<tr><td colspan="8" class="detail-empty">No current opportunities in cached reports. Select a sport and refresh its data.</td></tr>';
+  notice.hidden = true;
+  const quotePair = (quotes, url, venue) => {
+    const pair = `<span class="book-pair"><span class="price ${Number(quotes?.[0]) < .5 ? 'down' : 'up'}">${price(quotes?.[0])}</span><span class="price ${Number(quotes?.[1]) < .5 ? 'down' : 'up'}">${price(quotes?.[1])}</span></span>`;
+    return url ? `<a class="book-link" href="${safe(url)}" target="_blank" rel="noopener noreferrer" aria-label="Open this event on ${safe(venue)}">${pair}</a>` : pair;
+  };
+  const opportunitiesTable = opportunities.length ? opportunities.map(row => `<tr><td>${row.teams?.length ? `<div class="game-teams">${row.teams.map(teamMarkup).join('')}</div>` : `<span class="game">${safe(row.title)}</span>`}</td><td><span class="start">${safe(startTime(row.start_time))}</span></td><td>${quotePair(row.kalshi, row.kalshi_url, 'Kalshi')}</td><td>${quotePair(row.polymarket_us, row.polymarket_us_url, 'Polymarket US')}</td><td class="unavailable-book"></td><td class="unavailable-book"></td><td>${row.edge ? `<div class="arb"><strong>+${(row.edge * 100).toFixed(2)}%</strong></div>` : '<span class="no-arb">—</span>'}</td></tr>`).join('') : '<tr><td colspan="7" class="detail-empty">No current opportunities in cached reports. Select a sport and refresh its data.</td></tr>';
   const total = Object.values(sportCounts).reduce((sum, count) => sum + count, 0);
   const sportList = Object.entries(sportCounts).filter(([, count]) => count).sort((a, b) => b[1] - a[1]).map(([name, count]) => `<li><span>${safe(name)}</span><b>${count}</b></li>`).join('') || '<li><span>No report data yet</span></li>';
-  tableWrap.innerHTML = `<section class="wallet-grid">${wallets.map(walletCard).join('')}</section><section class="opportunities"><div class="opportunity-heading"><div><h2>Top Opportunities</h2></div></div><div class="opportunity-table"><table><thead><tr><th>Game / Event</th><th>Start time</th><th>Market</th><th><span class="book-heading"><b class="venue-icon kalshi">K</b>Kalshi</span></th><th><span class="book-heading"><b class="venue-icon polymarket">◇</b>Polymarket US</span></th><th><span class="book-heading"><b class="venue-icon novig">N</b>Novig</span></th><th><span class="book-heading"><b class="venue-icon prophetx">P</b>ProphetX</span></th><th>Arbitrage</th></tr></thead><tbody>${opportunitiesTable}</tbody></table></div></section><section class="sport-summary"><div class="summary-ring"><strong>${total}</strong><span>Games</span></div><div><h2>Opportunities by sport</h2><ul>${sportList}</ul></div></section>`;
+  tableWrap.innerHTML = `<section class="wallet-grid">${wallets.map(walletCard).join('')}</section><h2 class="home-section-title">Top Opportunities</h2><section class="opportunities"><div class="opportunity-table"><table><thead><tr><th>Game / Event</th><th>Start time</th><th><span class="book-heading"><b class="venue-icon kalshi">K</b>Kalshi</span></th><th><span class="book-heading"><b class="venue-icon polymarket">◇</b>Polymarket US</span></th><th><span class="book-heading"><b class="venue-icon novig">N</b>Novig</span></th><th><span class="book-heading"><b class="venue-icon prophetx">P</b>ProphetX</span></th><th>Arbitrage</th></tr></thead><tbody>${opportunitiesTable}</tbody></table></div></section><section class="sport-summary"><div class="summary-ring"><strong>${total}</strong><span>Games</span></div><div><h2>Opportunities by sport</h2><ul>${sportList}</ul></div></section>`;
 }
 
 async function loadHome() {
@@ -182,36 +245,56 @@ async function loadHome() {
   }
 }
 
-async function loadSport(refreshData = false) {
+async function loadSport(refreshData = false, append = false) {
   const sport = activeSport;
-  if (!sport || refreshingSports.has(sport)) return;
-  refreshingSports.add(sport);
+  const leagues = [...activeLeagues];
+  const offset = append ? nextSportOffset : 0;
+  const selectionKey = `${sport}:${leagues.join(',')}`;
+  if (!sport || (append && offset == null) || refreshingSports.has(selectionKey)) return;
+  refreshingSports.add(selectionKey);
   refresh.disabled = true;
   refresh.textContent = refreshData ? 'Refreshing…' : 'Refresh data';
   try {
-    const endpoint = `/api/sports/${sport}${refreshData ? '/refresh' : ''}`;
+    const query = new URLSearchParams({ offset: String(offset), limit: String(sportPageSize) });
+    if (leagues.length) query.set('leagues', leagues.join(','));
+    const endpoint = `/api/sports/${sport}${refreshData ? '/refresh' : ''}?${query}`;
     const response = await fetch(endpoint, { method: refreshData ? 'POST' : 'GET' });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `Unable to load ${sport} data`);
     // Do not overwrite a newly selected tab with a slower previous request.
-    if (activeSport === sport) renderSport(data);
+    if (activeSport === sport && activeLeagues.join(',') === leagues.join(',')) renderSport(data, append);
   } catch (error) {
-    if (activeSport === sport) {
+    if (activeSport === sport && activeLeagues.join(',') === leagues.join(',')) {
       meta.textContent = `Could not load ${sport} data.`;
       tableWrap.innerHTML = `<div class="empty"><h2>Data unavailable</h2><p>${safe(error.message)}</p></div>`;
     }
   } finally {
-    refreshingSports.delete(sport);
-    if (activeSport === sport) {
+    refreshingSports.delete(selectionKey);
+    if (activeSport === sport && activeLeagues.join(',') === leagues.join(',')) {
       refresh.disabled = false;
       refresh.textContent = 'Refresh data';
     }
   }
 }
 
+document.querySelectorAll('.sport-group-toggle').forEach(toggle => toggle.addEventListener('click', () => {
+  const options = document.querySelector(`#${toggle.getAttribute('aria-controls')}`);
+  const willExpand = toggle.getAttribute('aria-expanded') !== 'true';
+  document.querySelectorAll('.sport-group-toggle').forEach(other => {
+    const otherOptions = document.querySelector(`#${other.getAttribute('aria-controls')}`);
+    other.setAttribute('aria-expanded', 'false');
+    otherOptions.hidden = true;
+  });
+  toggle.setAttribute('aria-expanded', String(willExpand));
+  options.hidden = !willExpand;
+}));
+
 tabs.forEach(tab => tab.addEventListener('click', () => {
   activeSport = tab.dataset.sport;
+  activeLeagues = tab.dataset.leagues.split(',');
+  activeLabel = tab.dataset.label;
   tabs.forEach(item => item.classList.toggle('active', item === tab));
+  document.querySelectorAll('.sport-group').forEach(group => group.classList.toggle('active', group.contains(tab)));
   home.classList.remove('active');
   refresh.hidden = false;
   loadSport();
@@ -219,28 +302,39 @@ tabs.forEach(tab => tab.addEventListener('click', () => {
 home.addEventListener('click', event => {
   event.preventDefault();
   activeSport = null;
+  activeLeagues = [];
+  activeLabel = '';
   home.classList.add('active');
   tabs.forEach(item => item.classList.remove('active'));
+  document.querySelectorAll('.sport-group').forEach(group => group.classList.remove('active'));
   loadHome();
 });
 refresh.addEventListener('click', () => activeSport ? loadSport(true) : loadHome());
-function openGameDetail(record) {
+function openGameDetail(record, index) {
   const params = new URLSearchParams({
     sport: activeSport,
     kalshi: record.kalshi_event_ticker,
     polymarket: record.polymarket_us_event_slug,
   });
+  if (activeLeagues.length) params.set('leagues', activeLeagues.join(','));
+  params.set('offset', String(Math.floor(index / sportPageSize) * sportPageSize));
   window.location.assign(`/game.html?${params}`);
 }
 tableWrap.addEventListener('click', event => {
+  if (event.target.closest('#load-more')) {
+    loadSport(false, true);
+    return;
+  }
   const row = event.target.closest('.game-row');
   if (!row || event.target.closest('a')) return;
-  openGameDetail(latestRecords[Number(row.dataset.gameIndex)]);
+  const index = Number(row.dataset.gameIndex);
+  openGameDetail(latestRecords[index], index);
 });
 tableWrap.addEventListener('keydown', event => {
   if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('.game-row')) {
     event.preventDefault();
-    openGameDetail(latestRecords[Number(event.target.dataset.gameIndex)]);
+    const index = Number(event.target.dataset.gameIndex);
+    openGameDetail(latestRecords[index], index);
   }
 });
 document.querySelector('#search').addEventListener('input', event => {
